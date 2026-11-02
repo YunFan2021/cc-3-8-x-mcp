@@ -512,12 +512,21 @@ async function startEditorBridge() {
  * 构建 tool/resource 的 ctx。
  */
 function buildToolCtx() {
+    const request = (...args) => Editor.Message.request(...args);
+    const context = () => require('./server/prefab-context').queryContext(request, Editor.Project.path);
+    const { createOpener, resolvePrefab } = require('./server/prefab-open');
+    const openPrefab = createOpener({
+        resolve: asset => resolvePrefab(request, Editor.Project.path, asset),
+        context, open: uuid => request('asset-db', 'open-asset', uuid),
+    });
     return {
         msg: function (target, name /*, ...args */) {
             var args = Array.prototype.slice.call(arguments, 2);
             return Editor.Message.request.apply(Editor.Message, [target, name].concat(args));
         },
         local: {
+            queryContext: context,
+            openPrefab,
             getPreviewUrl: getPreviewUrl,
             doReimport: doReimport,
             doRefreshAssets: doRefreshAssets,
@@ -545,24 +554,6 @@ async function stopEditorBridge() {
 }
 
 // ── temp/refresh 文件命令协议 ──
-
-/**
- * 打开 prefab 到编辑器场景视图（等价于双击 prefab）。
- * @param {string} urlOrPath  db:// 路径 或 绝对路径
- */
-async function doOpenPrefab(urlOrPath) {
-    var dbUrl = urlOrPath;
-    // 绝对路径 → 先通过 asset-db 反查 db:// url，再走统一路径
-    if (!urlOrPath.startsWith('db://')) {
-        var info = await Editor.Message.request('asset-db', 'query-asset-info', urlOrPath);
-        if (!info || !info.url) throw new Error('open-prefab: cannot find db:// url for ' + urlOrPath);
-        dbUrl = info.url;
-    }
-    var uuid = await Editor.Message.request('asset-db', 'query-uuid', dbUrl);
-    if (!uuid) throw new Error('open-prefab: cannot resolve uuid for ' + dbUrl);
-    await Editor.Message.request('asset-db', 'open-asset', uuid);
-    log('open-prefab: opened ' + dbUrl + ' (uuid=' + uuid + ')');
-}
 
 /** 重启指定插件（disable → enable）让其 JS 代码改动生效；name 缺省为本插件 cc-3-8-x-mcp。
  *  注意：reload 本插件自身时，本函数处于即将被卸载的 main.js 上下文，必须 fire-and-forget。
