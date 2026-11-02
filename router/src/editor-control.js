@@ -314,13 +314,31 @@ function resolvePreviewPort(projectPath) {
     return 7456;
 }
 
+/** 解析 Windows netstat：只统计指定 PID、指定本地端口的已建立 TCP 连接。 */
+function parseWindowsPreviewConnections(output, pid, previewPort) {
+    return output.split(/\r?\n/).filter(function (line) {
+        var fields = line.trim().split(/\s+/);
+        return fields.length === 5 && fields[0].toUpperCase() === 'TCP'
+            && fields[3].toUpperCase() === 'ESTABLISHED'
+            && Number(fields[4]) === Number(pid)
+            && fields[1].endsWith(':' + previewPort);
+    }).length;
+}
+
 /** 数编辑器进程预览端口上的 ESTABLISHED 连接数（0 = 没有调试现场）。 */
 function countPreviewConnections(pid, previewPort) {
-    try {
-        if (process.platform === 'win32') {
-            // TODO[win-verify]: Win 没有 lsof，待实测后用 netstat 实现；先不拦
-            return 0;
+    if (process.platform === 'win32') {
+        try {
+            var output = cp.execFileSync('netstat.exe', ['-ano', '-p', 'tcp'], {
+                encoding: 'utf-8', timeout: 5000, windowsHide: true, maxBuffer: 10 * 1024 * 1024,
+            });
+            return parseWindowsPreviewConnections(output, pid, previewPort);
+        } catch (e) {
+            // 查询失败不能视为无连接，避免在未确认调试现场时重启/关闭编辑器。
+            throw new Error('无法核对 Windows 预览连接，停止编辑器操作: ' + e.message);
         }
+    }
+    try {
         var out = cp.execFileSync('lsof', ['-nP', '-a', '-p', String(pid), '-iTCP:' + previewPort, '-sTCP:ESTABLISHED'], { encoding: 'utf-8' });
         return out.split('\n').filter(function (l) { return l.indexOf('ESTABLISHED') >= 0; }).length;
     } catch (e) { return 0; }   // lsof 无匹配时退出码非 0，按无连接处理
@@ -787,6 +805,7 @@ module.exports = {
     findEditorProcessByProject: findEditorProcessByProject,
     resolvePreviewPort: resolvePreviewPort,
     countPreviewConnections: countPreviewConnections,
+    parseWindowsPreviewConnections: parseWindowsPreviewConnections,
     assertNoDebugSession: assertNoDebugSession,
     resolveTarget: resolveTarget,
     resolveExecPath: resolveExecPath,

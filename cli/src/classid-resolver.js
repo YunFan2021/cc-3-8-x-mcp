@@ -14,7 +14,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { scanFiles } = require('./file-scan');
 const { compressUuid } = require('./id');
 
 const _cache = new Map(); // projectRoot -> Map<className, entry>
@@ -54,15 +54,10 @@ function _extractCcClassNames(src) {
 function _listTsFiles(scanDirs) {
   const existingDirs = scanDirs.filter((dir) => fs.existsSync(dir));
   if (existingDirs.length === 0) return [];
-  const roots = existingDirs.map((dir) => `"${dir.replace(/"/g, '\\"')}"`).join(' ');
   try {
-    const raw = execSync(
-      `find ${roots} -name "*.ts" -not -name "*.d.ts" -type f`,
-      { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 }
-    );
-    return raw.trim().split('\n').filter(Boolean);
+    return scanFiles(existingDirs, (name) => name.endsWith('.ts') && !name.endsWith('.d.ts'));
   } catch (e) {
-    throw new Error(`ClassIdResolver: find 命令失败: ${e.message}`);
+    throw new Error(`ClassIdResolver: 文件扫描失败: ${e.message}`);
   }
 }
 
