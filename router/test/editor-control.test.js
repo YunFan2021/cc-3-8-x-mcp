@@ -100,8 +100,8 @@ test('acquireSpawnLock is reentrant for the same process', () => {
 
 test('acquireSpawnLock throws when an alive holder owns the lock', () => {
     const lockPath = spawnLockPath(FAKE_PROJECT);
-    // pid 1 = launchd，永远存活且不是本进程
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: 1, projectPath: FAKE_PROJECT, at: Date.now() }));
+    // 测试运行期间父进程存活且不同于当前进程，避免依赖 macOS 的固定 PID 1。
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.ppid, projectPath: FAKE_PROJECT, at: Date.now() }));
     assert.throws(() => acquireSpawnLock(FAKE_PROJECT), /正在 spawn\/restart/);
     fs.unlinkSync(lockPath);
 });
@@ -118,7 +118,7 @@ test('acquireSpawnLock steals the lock from a dead holder', () => {
 
 test('releaseSpawnLock does not remove a lock held by another process', () => {
     const lockPath = spawnLockPath(FAKE_PROJECT);
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: 1, projectPath: FAKE_PROJECT, at: Date.now() }));
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.ppid, projectPath: FAKE_PROJECT, at: Date.now() }));
     releaseSpawnLock(FAKE_PROJECT);
     assert.ok(fs.existsSync(lockPath), 'foreign lock untouched');
     fs.unlinkSync(lockPath);

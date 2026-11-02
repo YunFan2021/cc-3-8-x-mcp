@@ -3,7 +3,7 @@
 // 构建 uuid → prefab 磁盘路径 索引，仅扫描一次后缓存于内存。
 //
 // 设计约束：
-//   - 不引入第三方依赖（纯 Node.js fs + path + child_process）
+//   - 不引入第三方依赖（纯 Node.js fs + path）
 //   - uuid 索引只扫一次，重复调用复用缓存
 //   - 解析失败时明确抛错，不静默降级
 // ============================================================
@@ -12,7 +12,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { scanFiles } = require('./file-scan');
 
 // ─── 模块级缓存 ───────────────────────────────────────────────
 
@@ -73,16 +73,12 @@ function _buildIndex(projectRoot) {
     throw new Error(`UuidResolver: assets 目录不存在: ${assetsDir}`);
   }
 
-  // 用 find 命令比 Node 递归快，且无需手写 readdir 递归
+  // 使用跨平台扫描；不依赖 Unix find，也不受目录中的空格或中文影响。
   let metaFiles;
   try {
-    const raw = execSync(
-      `find "${assetsDir}" -name "*.prefab.meta" -type f`,
-      { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }
-    );
-    metaFiles = raw.trim().split('\n').filter(Boolean);
+    metaFiles = scanFiles([assetsDir], (name) => name.endsWith('.prefab.meta'));
   } catch (e) {
-    throw new Error(`UuidResolver: find 命令失败: ${e.message}`);
+    throw new Error(`UuidResolver: 文件扫描失败: ${e.message}`);
   }
 
   const index = new Map();
