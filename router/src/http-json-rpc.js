@@ -110,7 +110,7 @@ function bridgeJsonRpc(targetUrl, body, options) {
 }
 
 function toolTimeoutMs(name) {
-    return /(?:asset_refresh|asset_reimport|preview_refresh_and_reload|scene_open_scene|scene_save_scene)$/.test(name || '')
+    return /(?:asset_refresh|asset_reimport|preview_refresh_and_reload|prefab_open|scene_open_scene|scene_save_scene)$/.test(name || '')
         ? LONG_TOOL_TIMEOUT_MS
         : TOOL_TIMEOUT_MS;
 }
