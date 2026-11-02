@@ -151,6 +151,8 @@ prefab_query                   →  Gateway 本地执行（cli），无需编辑
 | `scene_query_node_tree` | 查询当前场景节点树；传 uuid 查子树 |
 | `scene_query_node` | 查询单节点完整 dump（含所有组件属性） |
 | `scene_set_property` | 设置节点/组件属性（path 为 dump path，如 `position`、`__comps__.0.string`） |
+| `scene_query_context` | 读取当前编辑模式、资源身份、根节点实例和未保存状态 |
+| `prefab_open` | 传本项目 Prefab 的 asset（URL、UUID 或绝对路径），等待并确认已加载实例 |
 | `scene_open_scene` | 打开场景（传场景资源 uuid） |
 | `scene_save_scene` | 保存当前场景 |
 | `scene_soft_reload` | 软重载场景，不清编辑器状态 |

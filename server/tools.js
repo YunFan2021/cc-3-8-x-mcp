@@ -13,6 +13,13 @@ function defineTools(ctx) {
     return [
         // ── scene 域 ──
         {
+            name: 'scene_query_context',
+            description: '只读查询当前编辑资源、加载根节点及未保存状态。无法确认的信息返回 null。',
+            annotations: { readOnlyHint: true },
+            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            handler: () => local.queryContext(),
+        },
+        {
             name: 'scene_query_node_tree',
             description: '查询当前场景节点树。传 uuid 查子树，不传查根。',
             inputSchema: {
@@ -54,6 +61,12 @@ function defineTools(ctx) {
                     dump: args.dump,
                 });
             },
+        },
+        {
+            name: 'prefab_open',
+            description: '安全打开本项目 Prefab，等待实际根节点。blocked/pending/unconfirmed 时禁止自动重试或保存。只在 opened/already_open 后回读实例。',
+            inputSchema: { type: 'object', properties: { asset: { type: 'string', description: 'db://assets URL、项目内绝对路径或标准资源 UUID' } }, required: ['asset'], additionalProperties: false },
+            handler: args => local.openPrefab(args.asset),
         },
         {
             name: 'scene_open_scene',
