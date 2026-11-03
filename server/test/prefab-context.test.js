@@ -131,3 +131,75 @@ test('scene contexts retain roots, dirty states and sync message failure diagnos
         if (dirty === null) assert.ok(result.diagnostics.some(d => d.code === 'MESSAGE_FAILED'));
     }
 });
+
+test('共享锁阻止 Prefab 打开期间保存或重载', async () => {
+    let release;
+    const opener = createOpener({ resolve: async () => ({ uuid: 'b' }), context: async () => current,
+        open: () => new Promise(done => { release = done; }), timeoutMs: 20 });
+    const running = opener('b');
+    assert.equal((await opener.runEditorAction('reload', {}, assert.fail)).status, 'busy');
+    await running;
+    assert.equal((await opener.runEditorAction('save', { expectedAssetUuid: 'a' }, assert.fail)).status, 'pending');
+    release();
+});
+
+test('保存必须指定当前资源，重载必须已保存', async () => {
+    let state = { ...current, dirty: true }, writes = 0;
+    const opener = createOpener({ resolve: assert.fail, context: async () => state, open: assert.fail });
+    const action = () => { writes++; state = { ...state, dirty: false }; };
+    assert.equal((await opener.runEditorAction('save', {}, action)).reason, 'EXPECTED_RESOURCE_REQUIRED');
+    assert.equal((await opener.runEditorAction('save', { expectedAssetUuid: 'wrong' }, action)).reason, 'CONTEXT_CONFLICT');
+    assert.equal((await opener.runEditorAction('reload', {}, action)).reason, 'UNSAVED');
+    assert.equal(writes, 0);
+    assert.equal((await opener.runEditorAction('save', { expectedAssetUuid: 'a' }, action)).status, 'completed');
+    assert.equal(writes, 1);
+});
+
+test('检查期间页面变化时阻止实际消息', async () => {
+    let count = 0;
+    const opener = createOpener({ resolve: assert.fail, context: async () => ({ ...current, assetUuid: ++count === 1 ? 'a' : 'b' }), open: assert.fail });
+    assert.equal((await opener.runEditorAction('reload', {}, assert.fail)).reason, 'CONTEXT_CONFLICT');
+});
+
+test('重载超时后保持保护，完成消息与实例确认后可恢复', async () => {
+    let release;
+    const opener = createOpener({ resolve: async () => ({ uuid: 'a' }), context: async () => current, open: assert.fail, timeoutMs: 20 });
+    const result = await opener.runEditorAction('reload', {}, () => new Promise(done => { release = done; }));
+    assert.equal(result.status, 'unconfirmed');
+    assert.equal((await opener('a')).status, 'pending');
+    release(); await new Promise(done => setImmediate(done));
+    assert.equal((await opener.queryStatus(result.operationId)).status, 'completed');
+    assert.equal((await opener('a')).status, 'already_open');
+});
+
+test('参数校验遵循顶层必填及封闭字段，同时允许任意脚本参数', () => {
+    const { defineTools } = require('../tools');
+    const { validateArguments } = require('../validate-arguments');
+    const tools = defineTools({ msg() {}, local: {} });
+    const schema = name => tools.find(t => t.name === name).inputSchema;
+    for (const value of [null, [], false, { uuid: 3 }, { uuid: 'a', unexpected: true }])
+        assert.equal(validateArguments(schema('scene_query_node'), value).code, 'INVALID_ARGUMENTS');
+    assert.equal(validateArguments(schema('scene_save_scene'), {}).code, 'INVALID_ARGUMENTS');
+    assert.equal(validateArguments(schema('scene_execute_script'), { extension: 'x', method: 'y', args: [null, { free: 'value' }] }), null);
+    assert.equal(validateArguments(schema('scene_set_property'), { uuid: 'a', path: 'name', dump: { type: 'String', value: 'n' } }), null);
+});
+
+test('属性写入进入共享保护并配对 begin/end recording，失败也结束记录', async () => {
+    const calls = [];
+    const { defineTools } = require('../tools');
+    const tool = defineTools({
+        msg: async (...args) => {
+            calls.push(args);
+            if (args[1] === 'begin-recording') return 'undo-id';
+            if (args[1] === 'set-property') return false;
+        },
+        local: { runEditorAction: async (kind, args, action) => {
+            assert.equal(kind, 'edit');
+            assert.equal(args.expectedAssetUuid, 'asset');
+            return action();
+        } },
+    }).find(t => t.name === 'scene_set_property');
+    await assert.rejects(tool.handler({ uuid: 'node', path: 'name', dump: { type: 'String', value: 'n' }, expectedAssetUuid: 'asset' }), /PROPERTY_WRITE_REJECTED/);
+    assert.deepEqual(calls.map(a => a[1]), ['begin-recording', 'set-property', 'end-recording']);
+    assert.deepEqual(calls[2], ['scene', 'end-recording', 'undo-id']);
+});

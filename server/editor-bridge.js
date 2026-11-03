@@ -9,6 +9,7 @@
 
 var http = require('http');
 var crypto = require('crypto');
+var { validateArguments } = require('./validate-arguments');
 
 var BRIDGE_API_VERSION = 1;
 var DEFAULT_MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -117,7 +118,12 @@ function createEditorBridge(options) {
                     });
                 }
                 try {
-                    var result = await tool.handler(params.arguments || {});
+                    var args = params.arguments === undefined ? {} : params.arguments;
+                    var invalid = validateArguments(toolSchema(tool).inputSchema, args);
+                    if (invalid) return response(message.id, {
+                        isError: true, structuredContent: invalid, content: [textContent(JSON.stringify(invalid))],
+                    });
+                    var result = await tool.handler(args);
                     return response(message.id, normalizeToolResult(result));
                 } catch (e) {
                     return response(message.id, {

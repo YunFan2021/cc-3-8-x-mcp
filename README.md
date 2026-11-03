@@ -282,3 +282,12 @@ echo "restart-package" > temp/refresh
 ## 反馈
 
 使用本扩展（MCP tool / offline CLI）时遇到 bug、行为异常或文档与实际不符，agent 必须把问题反馈给用户，由用户决定是否修复扩展本身，不要在调用方加 workaround 绕过。
+
+### 编辑写入保护
+
+- scene_open_scene、scene_soft_reload、scene_save_scene、scene_set_property 和 preview_refresh_and_reload 与 prefab_open 共用操作锁及迟到消息保护。
+- scene_save_scene 和 preview_refresh_and_reload 必须传 expectedAssetUuid。保存需要用户已授权保存该资源，工具不自动保存或丢弃未保存编辑。其他受保护入口可传 expectedAssetUuid 检测调用前的页面切换。
+- 这些受保护工具返回结构化 status，completed 表示操作完成，blocked 表示上下文冲突或未保存，unconfirmed/pending 时用 prefab_query_open 查询操作。不得再把任意非空返回值视为成功。
+- scene_set_property 配对 begin-recording/end-recording，保证 Creator 修改记录及 dirty 状态正确；失败时保留诊断及迟到保护，不自动回滚其他编辑。
+- Bridge 验证现有 inputSchema 的类型、必填字段、枚举及顶层未知字段。dump 和脚本 args 的开放内容仍按工具声明处理。参数错误返回 isError 与 INVALID_ARGUMENTS，不发送 Editor 消息。
+- 共享锁覆盖以上命名入口；scene_execute_script 和 scene_execute_component_method 属于显式执行能力，仍需调用者根据具体方法检查副作用。
