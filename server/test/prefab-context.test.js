@@ -196,7 +196,7 @@ test('属性写入进入共享保护并配对 begin/end recording，失败也结
         local: { runEditorAction: async (kind, args, action) => {
             assert.equal(kind, 'edit');
             assert.equal(args.expectedAssetUuid, 'asset');
-            return action();
+            return action({ write: fn => fn() });
         } },
     }).find(t => t.name === 'scene_set_property');
     await assert.rejects(tool.handler({ uuid: 'node', path: 'name', dump: { type: 'String', value: 'n' }, expectedAssetUuid: 'asset' }), /PROPERTY_WRITE_REJECTED/);

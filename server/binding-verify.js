@@ -22,11 +22,11 @@ async function verifyBindings({ context, msg }, args) {
         const before = await call(context);
         if (!before.ready || before.assetUuid !== args.expectedAssetUuid) return { status: 'invalidated', reason: 'CONTEXT_CONFLICT' };
         const tree = await call(() => msg('scene', 'query-node-tree', before.rootUuid));
-        const nodes = new Set(), instances = new Set();
+        const nodes = new Set(), instances = new Map();
         function visit(n) {
             if (!n) return;
-            nodes.add(n.uuid); instances.add(n.uuid);
-            for (const c of n.components || []) instances.add(c.value);
+            nodes.add(n.uuid); instances.set(n.uuid, { type: n.type || 'cc.Node', extends: ['cc.Node'] });
+            for (const c of n.components || []) instances.set(c.value, c);
             for (const c of n.children || []) visit(c);
         }
         visit(tree);
@@ -46,7 +46,12 @@ async function verifyBindings({ context, msg }, args) {
                 const resolved = [];
                 for (const uuid of uuids) {
                     if (uuid === null) { resolved.push(false); continue; }
-                    resolved.push(instances.has(uuid) || !!(await call(() => msg('asset-db', 'query-asset-info', uuid)))?.uuid);
+                    const local = instances.get(uuid);
+                    const info = local || await call(() => msg('asset-db', 'query-asset-info', uuid));
+                    const actualType = info?.type;
+                    const compatible = actualType === field.type || (info?.extends || []).includes(field.type);
+                    resolved.push(!!info && (local || info.uuid === uuid) && info.invalid !== true &&
+                        info.imported !== false && compatible);
                 }
                 const matched = JSON.stringify(actual) === JSON.stringify(check.expected) &&
                     (!check.expectedType || field.type === check.expectedType) && resolved.every(Boolean);

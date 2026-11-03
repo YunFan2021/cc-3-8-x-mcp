@@ -8,7 +8,7 @@
 
 function defineTools(ctx) {
     var msg = ctx.msg;   // async (target, name, ...args) => result
-    var local = ctx.local; // { getPreviewUrl, doReimport, doRefreshAssets, doReloadScene, listWorktrees, openDevDir, cleanDevDir, getStatus }
+    var local = ctx.local; // { getPreviewUrl, doRefreshAssets, doReloadScene, listWorktrees, openDevDir, cleanDevDir, getStatus }
 
     return [
         // ── scene 域 ──
@@ -76,15 +76,15 @@ function defineTools(ctx) {
                 required: ['uuid', 'path', 'dump'],
             },
             handler: async function (args) {
-                return local.runEditorAction('edit', args, async () => {
-                    const record = await msg('scene', 'begin-recording', args.uuid);
+                return local.runEditorAction('edit', args, async controls => {
+                    const record = await controls.write(() => msg('scene', 'begin-recording', args.uuid));
                     try {
-                        const result = await msg('scene', 'set-property', { uuid: args.uuid, path: args.path, dump: args.dump });
+                        const result = await controls.write(() => msg('scene', 'set-property', { uuid: args.uuid, path: args.path, dump: args.dump }));
                         if (result === false) throw Error('PROPERTY_WRITE_REJECTED');
                     } finally {
                         await msg('scene', 'end-recording', record);
                     }
-                });
+                }, undefined, true);
             },
         },
         {
@@ -327,12 +327,12 @@ function defineTools(ctx) {
             name: 'preview_refresh_and_reload',
             description: '在同一编辑上下文保护下刷新资源并软重载。未保存或状态未知时阻止。',
             inputSchema: { type: 'object', properties: { expectedAssetUuid: { type: 'string' } }, required: ['expectedAssetUuid'] },
-            handler: args => local.runEditorAction('reload', args, async () => {
-                await local.doRefreshAssets();
-                const current = await local.queryContext();
+            handler: args => local.runEditorAction('reload', args, async controls => {
+                await controls.write(() => local.doRefreshAssets());
+                const current = await controls.read(() => local.queryContext());
                 if (current.dirty !== false || current.assetUuid !== args.expectedAssetUuid) throw Error('CONTEXT_CONFLICT');
-                await local.doReloadScene();
-            }),
+                await controls.write(() => local.doReloadScene());
+            }, undefined, true),
         },
 
         // ── local 域 ──

@@ -538,7 +538,6 @@ function buildToolCtx() {
             runEditorAction: openPrefab.runEditorAction,
             queryPrefabOpen: openPrefab.queryStatus,
             getPreviewUrl: getPreviewUrl,
-            doReimport: doReimport,
             doRefreshAssets: doRefreshAssets,
             doReloadScene: doReloadScene,
             listWorktrees: function () { return exports.methods.listWorktrees(); },

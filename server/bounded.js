@@ -14,4 +14,10 @@ async function bounded(call, timeoutMs) {
         ]);
     } finally { clearTimeout(timer); }
 }
-module.exports = { bounded };
+// 多步骤操作共享同一毫秒截止时间；每次排入新的异步步骤前再次检查。
+function createDeadline(timeoutMs) {
+    const end = Date.now() + timeoutMs;
+    const check = () => { if (Date.now() >= end) { const e = new Error('Operation timeout'); e.code = 'TIMEOUT'; throw e; } };
+    return { check, wait: call => bounded(() => { check(); return call(); }, end - Date.now()) };
+}
+module.exports = { bounded, createDeadline };

@@ -24,7 +24,7 @@ async function resolvePrefab(msg, projectPath, asset) {
 
 // 每个 Bridge 仅保留最近一次操作；ID 含实例随机前缀，扩展重载后旧 ID 不能匹配新操作。
 function createOpener({ resolve, context, open, timeoutMs = 12000, pollMs = 150 }) {
-    const { bounded } = require('./bounded');
+    const { bounded, createDeadline } = require('./bounded');
     const instance = require('crypto').randomBytes(6).toString('hex');
     let sequence = 0, busy = false, pending = null, latest = null;
     const loaded = (c, uuid) => c?.ready === true && c.mode === 'prefab' && c.assetUuid === uuid && !!c.rootUuid;
@@ -42,7 +42,7 @@ function createOpener({ resolve, context, open, timeoutMs = 12000, pollMs = 150 
             requestedAsset: op.asset, assetUuid: op.target?.uuid || null, assetUrl: op.target?.url || null,
             startedAt: op.startedAt, elapsedMs: Date.now() - op.startedAt,
             dispatched: op.dispatched, settled: op.settled, reason: op.reason,
-            context: op.context, recovery: pending === op ? 'WAIT_FOR_TARGET_AND_REQUEST_SETTLED' : null };
+            context: op.context, details: op.details ? JSON.parse(JSON.stringify(op.details)) : null, recovery: pending === op ? 'WAIT_FOR_TARGET_AND_REQUEST_SETTLED' : null };
     }
 
     // 状态查询只读编辑器。仅当旧请求结束且目标确实加载后清除内部保护。
@@ -81,13 +81,7 @@ function createOpener({ resolve, context, open, timeoutMs = 12000, pollMs = 150 
         const op = { id: instance + '-' + (++sequence), asset, startedAt: Date.now(), status: 'running',
             phase: 'resolving', dispatched: false, settled: false, reason: null, context: null, target: null };
         latest = op;
-        const deadline = op.startedAt + timeoutMs;
-        async function wait(call) {
-            if (Date.now() >= deadline) {
-                const error = new Error('Operation timeout'); error.code = 'TIMEOUT'; throw error;
-            }
-            return bounded(call, deadline - Date.now());
-        }
+        const { wait, check } = createDeadline(timeoutMs);
         try {
             op.target = await wait(() => resolve(asset));
             op.phase = 'checking_context';
@@ -104,11 +98,14 @@ function createOpener({ resolve, context, open, timeoutMs = 12000, pollMs = 150 
             op.phase = 'opening';
             await wait(async () => {
                 // bounded 的微任务执行前复核截止时间，过期的预检不会发起切换。
-                if (Date.now() >= deadline) { const error = new Error('Operation timeout'); error.code = 'TIMEOUT'; throw error; }
+                check();
                 op.dispatched = true;
                 pending = op;
                 try { await open(op.target.uuid); }
-                finally { op.settled = true; }
+                finally {
+                    op.settled = true;
+                    if (!op.dispatched && pending === op) pending = null;
+                }
             });
             op.phase = 'waiting_for_instance';
             while (true) {
@@ -130,7 +127,7 @@ function createOpener({ resolve, context, open, timeoutMs = 12000, pollMs = 150 
 
     // 场景切换、重载和保存与 Prefab 打开共用 busy/pending。
     // expectedAssetUuid 用于检测用户在调用前已切换页面；保存必须明确指定它。
-    async function runEditorAction(kind, args, action, validateTarget) {
+    async function runEditorAction(kind, args, action, validateTarget, managed = false) {
         if (busy) return snapshot(latest, 'busy');
         if (pending) {
             await queryStatus(pending.id);
@@ -142,11 +139,7 @@ function createOpener({ resolve, context, open, timeoutMs = 12000, pollMs = 150 
             startedAt: Date.now(), status: 'running', phase: 'checking_context', dispatched: false,
             settled: false, target: null, context: null, reason: null };
         latest = op;
-        const deadline = op.startedAt + timeoutMs;
-        const wait = call => bounded(() => {
-            if (Date.now() >= deadline) { const e = new Error('timeout'); e.code = 'TIMEOUT'; throw e; }
-            return call();
-        }, deadline - Date.now());
+        const { wait, check } = createDeadline(timeoutMs);
         try {
             op.context = await wait(context);
             const c = op.context;
@@ -171,8 +164,19 @@ function createOpener({ resolve, context, open, timeoutMs = 12000, pollMs = 150 
             op.target = { uuid: kind === 'scene' ? args.uuid : c.assetUuid };
             op.phase = 'executing';
             await wait(async () => {
-                op.dispatched = true; pending = op;
-                try { await action(); }
+                pending = op;
+                const controls = {
+                    // 新的实际写入前复核截止时间；已发出的消息及记录清理由调用者等待结束。
+                    write: call => {
+                        check();
+                        op.dispatched = true;
+                        return call();
+                    },
+                    read: wait,
+                    details: value => { op.details = JSON.parse(JSON.stringify(value)); },
+                };
+                if (!managed) op.dispatched = true;
+                try { await action(controls); }
                 catch (error) { op.requestFailed = true; throw error; }
                 finally { op.settled = true; }
             });

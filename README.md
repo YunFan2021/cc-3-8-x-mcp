@@ -299,3 +299,10 @@ echo "restart-package" > temp/refresh
 - local_query_identity 比较扩展启动时的 loaded 与当前 disk 身份。maintenance-manifest.json 明确覆盖 main.js、package.json 和 server 生产模块，按规范化换行后的内容哈希标识，不声称覆盖 CLI、引擎或游戏业务。
 - Gateway 的 scripts/check-extension.js <扩展绝对目录> 只读比较模板与安装副本。matched 返回0；local_changes、different_baseline、unknown 返回1，均不覆盖文件。connect-project 对已有安装也执行同样核验。
 - 更新模板时按 maintenance-manifest.json 的文件清单同步生产入口并核对哈希，源码、模板、项目副本分别检查；本地差异需先处理。运行身份仍须在重新加载扩展后通过 local_query_identity 确认。
+
+### 超时与维护同步补充
+
+- 复杂操作在每次新的写入前检查同一截止时间；已开始的修改记录会配对清理。导入详情保存在操作记录 details.import 中，超时后可用 prefab_query_open(operationId) 回读。
+- 绑定校验同时检查字段声明与引用目标实际类型、合法继承、UUID、invalid/imported 状态，不能用字段类型代替资源有效性。
+- 清单校验覆盖必需入口、总哈希和范围内新增文件。node scripts/update-manifest.js <扩展绝对路径> --write 显式更新清单，默认仅检查。
+- sync-runtime.js 默认只读预览；--apply 要求维护仓库目标范围无本地改动。同步先暂存并复核内容，替换失败回滚；备份及 recovery.json 留在返回的 .mcp-sync-* 目录。进程强制退出后的恢复需人工核对该记录及目录，不自动删除备份。

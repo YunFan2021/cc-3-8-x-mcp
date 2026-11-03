@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
   "scope": "editor-bridge-production-entrypoints",
-  "fingerprint": "cc0161fb5b3bf08d7db65e6551ba416c9f6ea2747ef29e4624fffdb2e0be19d0",
+  "fingerprint": "ed49a88391d6df1db56ebb3f76ba119d22559379fbe4f0cc47c5a9908ed1d0eb",
   "files": {
-    "main.js": "d728c7722a0a8c08315a879d93bd6de9568397524fe10f298c0d88a2d954a7aa",
+    "main.js": "a39e0f9f38480bf0c2c68de58d2ce45fde17e38f2233878a47f80ed7c47d1e2e",
     "package.json": "d0a1bc895eef229f6092a17a6847f55d34e022be0c9589a4d24239b4b9e266c7",
-    "server/asset-confirm.js": "440e38d23dea48de0f95a129def0d9b7a3cebb9dbb4c763214dc044c8aab3b9a",
-    "server/binding-verify.js": "7a5ba14b3f4bc8365ff7695bbc5b2af4ef7e79bbe1da3337be0d884a01bfe37a",
-    "server/bounded.js": "34250b42025c173b4204d9803a74bf72695297e89ef75eaf1605edabc3108638",
+    "server/asset-confirm.js": "26989e87614f59ea412fcd8cff669c5c66d7bc17e1d63ad6050ab22a6d728e83",
+    "server/binding-verify.js": "e60463f9ba294cd358ad02a8c560ed5e44828c27e3ea43ccc9c12cd7e9b5c74b",
+    "server/bounded.js": "b2989d8781ed31a8c84c1aa8b0919512d4f87a1ff40d2d6a6dfcd3231987343a",
     "server/editor-bridge.js": "04756c9d1863a865f3d571e05a97f93fc375a7190fc57855ab3d3ed053309131",
-    "server/identity.js": "a1171629be4dd6d3ceb417b739a4815bae678a12af4992b51c850715e1df507f",
+    "server/identity.js": "5975d8024a4e648f39070c1c622dd16e817c47e3be0660287ecbb4f4a862af40",
     "server/local-status.js": "9707b53a1ea3ef301846414affcb6b197d69e58f2a18f907f014c90e0beb7ec4",
     "server/prefab-context.js": "94ed8a8979e416a7f3fd01c8da01bd94e6bdde52a3d26cf05592ec373dfbea58",
-    "server/prefab-open.js": "f0d80c007dab7ea767588cb456219b4bb1003e185bdd80cbd3fadfb426eee31d",
-    "server/tools.js": "6011c1c6c27bebef05e31f609452b807e3587eb0114016abe7350c875b6d432a",
+    "server/prefab-open.js": "253f2c9254713740fa254e995ee2eef76a2b5627026afc792c9495acbe5a25b5",
+    "server/tools.js": "89110a9444ada37aa94c254d2daee72d7848e29ab6aaaf806d39681840be565b",
     "server/validate-arguments.js": "8072b657924eb22783abf456e3d57d76358e21b18eb75a13a64fe9c6bf559b23"
   }
 }
