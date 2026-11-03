@@ -527,6 +527,7 @@ function buildToolCtx() {
         local: {
             queryContext: context,
             openPrefab,
+            queryPrefabOpen: openPrefab.queryStatus,
             getPreviewUrl: getPreviewUrl,
             doReimport: doReimport,
             doRefreshAssets: doRefreshAssets,

@@ -22,47 +22,107 @@ async function resolvePrefab(msg, projectPath, asset) {
     return info;
 }
 
-// 每个 Editor Bridge 实例共享一个切换锁。超时后仅在确认目标到达时解除迟到操作的保护。
+// 每个 Bridge 仅保留最近一次操作；ID 含实例随机前缀，扩展重载后旧 ID 不能匹配新操作。
 function createOpener({ resolve, context, open, timeoutMs = 12000, pollMs = 150 }) {
-    let busy = false, pending = null;
-    const loaded = (c, uuid) => c.ready && c.mode === 'prefab' && c.assetUuid === uuid && !!c.rootUuid;
-    return async function openPrefab(asset) {
-        if (busy) return { status: 'busy' };
-        busy = true;
-        let expired = false, timer;
-        const timeout = new Promise(done => { timer = setTimeout(() => { expired = true; done({ status: 'unconfirmed' }); }, timeoutMs); });
-        async function run() {
-            const target = await resolve(asset);
-            const current = await context();
-            if (expired) return;
-            if (pending) {
-                if (!pending.settled || !loaded(current, pending.uuid)) return { status: 'pending', assetUuid: pending.uuid };
-                pending = null;
-            }
-            if (loaded(current, target.uuid)) return { status: 'already_open', context: current };
-            if (current.dirty !== false || !current.ready || !current.rootUuid || current.mode === 'unknown')
-                return { status: 'blocked', reason: current.dirty === true ? 'unsaved' : 'unknown_context', context: current };
+    const { bounded } = require('./bounded');
+    const instance = require('crypto').randomBytes(6).toString('hex');
+    let sequence = 0, busy = false, pending = null, latest = null;
+    const loaded = (c, uuid) => c?.ready === true && c.mode === 'prefab' && c.assetUuid === uuid && !!c.rootUuid;
 
-            const attempt = { uuid: target.uuid, settled: false };
-            pending = attempt;
-            try { await open(target.uuid); }
-            catch (err) {
-                // 请求失败也可能已送达；保留保护，避免下一次切换与迟到操作竞争。
-                return { status: 'unconfirmed', assetUuid: target.uuid, message: String(err.message || err) };
-            } finally { attempt.settled = true; }
-            while (!expired) {
-                const actual = await context();
-                if (expired) return;
-                if (loaded(actual, target.uuid)) {
-                    pending = null;
-                    return { status: 'opened', context: actual };
+    // 复制状态，避免后续迟到回调修改调用者已经取得的快照。
+    function snapshot(op, status) {
+        if (!op) return { status: 'idle' };
+        return { status: status || op.status, operationId: op.id, phase: op.phase,
+            requestedAsset: op.asset, assetUuid: op.target?.uuid || null, assetUrl: op.target?.url || null,
+            startedAt: op.startedAt, elapsedMs: Date.now() - op.startedAt,
+            dispatched: op.dispatched, settled: op.settled, reason: op.reason,
+            context: op.context, recovery: pending === op ? 'WAIT_FOR_TARGET_AND_REQUEST_SETTLED' : null };
+    }
+
+    // 状态查询只读编辑器。仅当旧请求结束且目标确实加载后清除内部保护。
+    async function queryStatus(operationId) {
+        const op = pending || latest;
+        if (operationId && operationId !== op?.id) return { status: 'not_found', operationId };
+        if (pending === op && op) {
+            try {
+                const actual = await bounded(context, Math.min(timeoutMs, 3000));
+                // 查询期间可能已经有新的操作进入，旧状态查询不能清掉新操作的保护。
+                if (pending === op) {
+                    op.context = actual;
+                    if (op.settled && loaded(actual, op.target.uuid)) {
+                        pending = null;
+                        op.phase = 'completed';
+                        op.status = 'opened';
+                        op.reason = 'TARGET_CONFIRMED';
+                    }
                 }
-                await new Promise(done => setTimeout(done, pollMs));
+            } catch (error) {
+                return { ...snapshot(op), queryError: error.code === 'TIMEOUT' ? 'TIMEOUT' : 'CONTEXT_QUERY_FAILED' };
             }
         }
-        try { return await Promise.race([run(), timeout]); }
-        finally { clearTimeout(timer); busy = false; }
-    };
+        return snapshot(op);
+    }
+
+    async function openPrefab(asset) {
+        if (busy) return snapshot(latest, 'busy');
+        if (pending) {
+            await queryStatus(pending.id);
+            if (pending) return snapshot(pending, 'pending');
+            // 另一个调用可能在状态查询期间先取得锁。
+            if (busy) return snapshot(latest, 'busy');
+        }
+        busy = true;
+        const op = { id: instance + '-' + (++sequence), asset, startedAt: Date.now(), status: 'running',
+            phase: 'resolving', dispatched: false, settled: false, reason: null, context: null, target: null };
+        latest = op;
+        const deadline = op.startedAt + timeoutMs;
+        async function wait(call) {
+            if (Date.now() >= deadline) {
+                const error = new Error('Operation timeout'); error.code = 'TIMEOUT'; throw error;
+            }
+            return bounded(call, deadline - Date.now());
+        }
+        try {
+            op.target = await wait(() => resolve(asset));
+            op.phase = 'checking_context';
+            op.context = await wait(context);
+            if (loaded(op.context, op.target.uuid)) {
+                op.status = 'already_open'; op.phase = 'completed';
+                return snapshot(op);
+            }
+            if (op.context?.dirty !== false || !op.context.ready || !op.context.rootUuid || op.context.mode === 'unknown') {
+                op.status = 'blocked';
+                op.reason = op.context?.dirty === true ? 'UNSAVED' : 'UNKNOWN_CONTEXT';
+                return snapshot(op);
+            }
+            op.phase = 'opening';
+            await wait(async () => {
+                // bounded 的微任务执行前复核截止时间，过期的预检不会发起切换。
+                if (Date.now() >= deadline) { const error = new Error('Operation timeout'); error.code = 'TIMEOUT'; throw error; }
+                op.dispatched = true;
+                pending = op;
+                try { await open(op.target.uuid); }
+                finally { op.settled = true; }
+            });
+            op.phase = 'waiting_for_instance';
+            while (true) {
+                op.context = await wait(context);
+                if (loaded(op.context, op.target.uuid)) {
+                    pending = null;
+                    op.status = 'opened'; op.phase = 'completed';
+                    return snapshot(op);
+                }
+                await wait(() => new Promise(done => setTimeout(done, pollMs)));
+            }
+        } catch (error) {
+            op.status = op.dispatched ? 'unconfirmed' : 'failed';
+            op.reason = error.code === 'TIMEOUT' ? 'TIMEOUT' :
+                ['INVALID_PREFAB', 'OUTSIDE_PROJECT'].includes(error.message) ? error.message : 'EDITOR_REQUEST_FAILED';
+            return snapshot(op);
+        } finally { busy = false; }
+    }
+    openPrefab.queryStatus = queryStatus;
+    return openPrefab;
 }
 
 module.exports = { createOpener, resolvePrefab };

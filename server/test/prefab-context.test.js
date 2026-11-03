@@ -63,3 +63,71 @@ test('resolver excludes non-prefabs, foreign files, traversal and subassets', as
     }
     await assert.rejects(resolvePrefab(async () => ({ ...info, type: 'cc.SceneAsset' }), tmp, good));
 });
+
+test('status query confirms late arrival without issuing another open', async () => {
+    let release, state = current, writes = 0;
+    const open = createOpener({ resolve: async () => ({ uuid: 'b' }), context: async () => state,
+        open: () => { writes++; return new Promise(done => { release = done; }); }, timeoutMs: 20 });
+    const first = await open('b');
+    assert.equal(first.status, 'unconfirmed');
+    assert.equal(first.dispatched, true);
+    assert.equal((await open.queryStatus('unknown')).status, 'not_found');
+    state = { ...current, assetUuid: 'b' };
+    assert.equal((await open.queryStatus(first.operationId)).settled, false);
+    release(); await Promise.resolve(); await Promise.resolve();
+    assert.equal((await open.queryStatus(first.operationId)).status, 'opened');
+    assert.equal(writes, 1);
+    assert.equal(first.status, 'unconfirmed');
+});
+
+test('preflight timeout cannot issue a delayed open and allows a new request', async () => {
+    let release, calls = 0, writes = 0;
+    const open = createOpener({ resolve: async () => {
+        if (++calls === 1) return new Promise(done => { release = done; });
+        return { uuid: 'a' };
+    }, context: async () => current, open: () => writes++, timeoutMs: 20 });
+    assert.equal((await open('a')).status, 'failed');
+    assert.equal((await open('a')).status, 'already_open');
+    release({ uuid: 'b' }); await new Promise(done => setImmediate(done));
+    assert.equal(writes, 0);
+});
+
+test('rejected editor request retains protection and exposes its phase', async () => {
+    const open = createOpener({ resolve: async () => ({ uuid: 'b' }), context: async () => current,
+        open: () => { throw Error('message failed'); } });
+    const result = await open('b');
+    assert.equal(result.reason, 'EDITOR_REQUEST_FAILED');
+    assert.equal(result.phase, 'opening');
+    assert.equal(result.settled, true);
+    assert.equal((await open('c')).status, 'pending');
+});
+
+test('context message timeout is bounded and late completion cannot mutate diagnostics', async () => {
+    let release;
+    const msg = (_, name) => {
+        if (name === 'query-dirty') return new Promise(done => { release = done; });
+        return Promise.resolve({ 'query-current-scene': 'a', 'query-scene-mode': 'prefab', 'query-is-ready': true }[name]);
+    };
+    const result = await queryContext(msg, '/project', { timeoutMs: 20 });
+    assert.equal(result.ready, false);
+    assert.ok(result.diagnostics.some(d => d.code === 'TIMEOUT'));
+    const before = JSON.stringify(result);
+    release(false); await new Promise(done => setImmediate(done));
+    assert.equal(JSON.stringify(result), before);
+});
+
+test('scene contexts retain roots, dirty states and sync message failure diagnostics', async () => {
+    for (const dirty of [true, false, null]) {
+        const result = await queryContext((_, name) => {
+            if (name === 'query-dirty' && dirty === null) throw Error('unsupported');
+            return Promise.resolve({
+                'query-current-scene': 'a', 'query-scene-mode': 'general', 'query-is-ready': true,
+                'query-dirty': dirty, 'query-asset-info': { uuid: 'a', type: 'cc.SceneAsset', url: 'db://assets/A.scene' },
+                'query-node-tree': { uuid: 'scene-root', type: 'cc.Scene' },
+            }[name]);
+        }, '/project');
+        assert.equal(result.rootUuid, 'scene-root');
+        assert.equal(result.dirty, dirty);
+        if (dirty === null) assert.ok(result.diagnostics.some(d => d.code === 'MESSAGE_FAILED'));
+    }
+});

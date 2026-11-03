@@ -63,6 +63,13 @@ function defineTools(ctx) {
             },
         },
         {
+            name: 'prefab_query_open',
+            description: '只读查询最近一次 Prefab 打开操作及超时恢复状态。可用 operationId 核对，未知 ID 返回 not_found；不发起打开或取消请求。',
+            annotations: { readOnlyHint: true },
+            inputSchema: { type: 'object', properties: { operationId: { type: 'string' } }, additionalProperties: false },
+            handler: args => local.queryPrefabOpen(args.operationId),
+        },
+        {
             name: 'prefab_open',
             description: '安全打开本项目 Prefab，等待实际根节点。blocked/pending/unconfirmed 时禁止自动重试或保存。只在 opened/already_open 后回读实例。',
             inputSchema: { type: 'object', properties: { asset: { type: 'string', description: 'db://assets URL、项目内绝对路径或标准资源 UUID' } }, required: ['asset'], additionalProperties: false },
