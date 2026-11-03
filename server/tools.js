@@ -13,6 +13,26 @@ function defineTools(ctx) {
     return [
         // ── scene 域 ──
         {
+            name: 'scene_verify_bindings',
+            description: '只读校验当前资源实例中的节点/组件字段引用。checks 使用 nodeUuid、componentType、field、expected（UUID或UUID数组）及可选 expectedType。最多100项；期间上下文或字段变化返回 invalidated。',
+            annotations: { readOnlyHint: true },
+            inputSchema: { type: 'object', properties: {
+                expectedAssetUuid: { type: 'string' },
+                checks: { type: 'array', items: { type: 'object', properties: {
+                    nodeUuid: { type: 'string' }, componentType: { type: 'string' }, field: { type: 'string' },
+                    expected: {}, expectedType: { type: 'string' },
+                }, required: ['nodeUuid','componentType','field','expected'], additionalProperties: false } },
+            }, required: ['expectedAssetUuid','checks'] },
+            handler: args => local.verifyBindings(args),
+        },
+        {
+            name: 'local_query_identity',
+            description: '只读查询扩展加载时与磁盘当前身份，比较维护清单中的生产代码文件。modified 表示本地差异，不能据此自动覆盖。',
+            annotations: { readOnlyHint: true },
+            inputSchema: { type: 'object', properties: {} },
+            handler: () => local.queryIdentity(),
+        },
+        {
             name: 'scene_query_context',
             description: '只读查询当前编辑资源、加载根节点及未保存状态。无法确认的信息返回 null。',
             annotations: { readOnlyHint: true },
@@ -216,6 +236,12 @@ function defineTools(ctx) {
             handler: async function (args) {
                 return await msg('asset-db', 'refresh-asset', args.url || 'db://assets/');
             },
+        },
+        {
+            name: 'asset_reimport_confirm',
+            description: '定向重导入并核对源文件、meta、导入状态和子资源。import.status 为 imported 才确认资源导入；实例更新须另外校验。',
+            inputSchema: { type: 'object', properties: { url: { type: 'string' }, expectedAssetUuid: { type: 'string' } }, required: ['url', 'expectedAssetUuid'] },
+            handler: args => local.reimportConfirm(args),
         },
         {
             name: 'asset_reimport',

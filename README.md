@@ -291,3 +291,11 @@ echo "restart-package" > temp/refresh
 - scene_set_property 配对 begin-recording/end-recording，保证 Creator 修改记录及 dirty 状态正确；失败时保留诊断及迟到保护，不自动回滚其他编辑。
 - Bridge 验证现有 inputSchema 的类型、必填字段、枚举及顶层未知字段。dump 和脚本 args 的开放内容仍按工具声明处理。参数错误返回 isError 与 INVALID_ARGUMENTS，不发送 Editor 消息。
 - 共享锁覆盖以上命名入口；scene_execute_script 和 scene_execute_component_method 属于显式执行能力，仍需调用者根据具体方法检查副作用。
+
+### 资源确认、绑定校验与维护身份
+
+- asset_reimport_confirm 传 url 和 expectedAssetUuid，复用编辑锁。import.status=imported 表示指定资源完成重导入且源文件/meta 哈希稳定，instanceVerified=false 表示仍需另查实例。返回 source_changed、unconfirmed 或外层 pending 时不能当作成功。
+- scene_verify_bindings 为只读工具，传 expectedAssetUuid 和 checks 数组，每项包含 nodeUuid、componentType、field、expected（UUID 或 UUID 数组）及可选 expectedType。核对数量、顺序、空引用、引用可解析性；上下文或字段二次读取发生变化返回 invalidated。
+- local_query_identity 比较扩展启动时的 loaded 与当前 disk 身份。maintenance-manifest.json 明确覆盖 main.js、package.json 和 server 生产模块，按规范化换行后的内容哈希标识，不声称覆盖 CLI、引擎或游戏业务。
+- Gateway 的 scripts/check-extension.js <扩展绝对目录> 只读比较模板与安装副本。matched 返回0；local_changes、different_baseline、unknown 返回1，均不覆盖文件。connect-project 对已有安装也执行同样核验。
+- 更新模板时按 maintenance-manifest.json 的文件清单同步生产入口并核对哈希，源码、模板、项目副本分别检查；本地差异需先处理。运行身份仍须在重新加载扩展后通过 local_query_identity 确认。

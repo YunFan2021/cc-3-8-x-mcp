@@ -512,6 +512,9 @@ async function startEditorBridge() {
  * 构建 tool/resource 的 ctx。
  */
 function buildToolCtx() {
+    const confirmAssets = require('./server/asset-confirm');
+    const verifyReferences = require('./server/binding-verify');
+    const identity = require('./server/identity').createIdentity(__dirname);
     const request = (...args) => Editor.Message.request(...args);
     const context = () => require('./server/prefab-context').queryContext(request, Editor.Project.path);
     const { createOpener, resolvePrefab } = require('./server/prefab-open');
@@ -525,6 +528,11 @@ function buildToolCtx() {
             return Editor.Message.request.apply(Editor.Message, [target, name].concat(args));
         },
         local: {
+            reimportConfirm: args => confirmAssets.reimportConfirm({
+                msg: request, projectPath: Editor.Project.path, run: openPrefab.runEditorAction,
+            }, args),
+            verifyBindings: args => verifyReferences.verifyBindings({ context, msg: request }, args),
+            queryIdentity: identity,
             queryContext: context,
             openPrefab,
             runEditorAction: openPrefab.runEditorAction,
