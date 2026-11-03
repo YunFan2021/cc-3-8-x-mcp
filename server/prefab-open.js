@@ -29,6 +29,12 @@ function createOpener({ resolve, context, open, timeoutMs = 12000, pollMs = 150 
     let sequence = 0, busy = false, pending = null, latest = null;
     const loaded = (c, uuid) => c?.ready === true && c.mode === 'prefab' && c.assetUuid === uuid && !!c.rootUuid;
 
+    // 普通场景和保存必须验证自己的完成条件；失败消息不能凭当前页面相同解除保护。
+    const confirmed = (op, c) => op.kind
+        ? op.settled && !op.requestFailed && c?.ready === true && c.assetUuid === op.target.uuid &&
+            !!c.rootUuid && (op.kind !== 'scene' || c.mode === 'scene') && (op.kind !== 'save' || c.dirty === false)
+        : loaded(c, op.target.uuid);
+
     // 复制状态，避免后续迟到回调修改调用者已经取得的快照。
     function snapshot(op, status) {
         if (!op) return { status: 'idle' };
@@ -49,10 +55,10 @@ function createOpener({ resolve, context, open, timeoutMs = 12000, pollMs = 150 
                 // 查询期间可能已经有新的操作进入，旧状态查询不能清掉新操作的保护。
                 if (pending === op) {
                     op.context = actual;
-                    if (op.settled && loaded(actual, op.target.uuid)) {
+                    if (op.settled && confirmed(op, actual)) {
                         pending = null;
                         op.phase = 'completed';
-                        op.status = 'opened';
+                        op.status = op.kind ? 'completed' : 'opened';
                         op.reason = 'TARGET_CONFIRMED';
                     }
                 }
@@ -121,6 +127,71 @@ function createOpener({ resolve, context, open, timeoutMs = 12000, pollMs = 150 
             return snapshot(op);
         } finally { busy = false; }
     }
+
+    // 场景切换、重载和保存与 Prefab 打开共用 busy/pending。
+    // expectedAssetUuid 用于检测用户在调用前已切换页面；保存必须明确指定它。
+    async function runEditorAction(kind, args, action, validateTarget) {
+        if (busy) return snapshot(latest, 'busy');
+        if (pending) {
+            await queryStatus(pending.id);
+            if (pending) return snapshot(pending, 'pending');
+            if (busy) return snapshot(latest, 'busy');
+        }
+        busy = true;
+        const op = { id: instance + '-' + (++sequence), kind, asset: args.uuid || args.expectedAssetUuid,
+            startedAt: Date.now(), status: 'running', phase: 'checking_context', dispatched: false,
+            settled: false, target: null, context: null, reason: null };
+        latest = op;
+        const deadline = op.startedAt + timeoutMs;
+        const wait = call => bounded(() => {
+            if (Date.now() >= deadline) { const e = new Error('timeout'); e.code = 'TIMEOUT'; throw e; }
+            return call();
+        }, deadline - Date.now());
+        try {
+            op.context = await wait(context);
+            const c = op.context;
+            if (!c?.ready || !c.rootUuid || c.mode === 'unknown' || c.dirty === null) {
+                op.status = 'blocked'; op.reason = 'UNKNOWN_CONTEXT'; return snapshot(op);
+            }
+            if (args.expectedAssetUuid && c.assetUuid !== args.expectedAssetUuid) {
+                op.status = 'blocked'; op.reason = 'CONTEXT_CONFLICT'; return snapshot(op);
+            }
+            if (kind === 'save' && !args.expectedAssetUuid) {
+                op.status = 'blocked'; op.reason = 'EXPECTED_RESOURCE_REQUIRED'; return snapshot(op);
+            }
+            if (kind !== 'save' && kind !== 'edit' && c.dirty !== false) {
+                op.status = 'blocked'; op.reason = 'UNSAVED'; return snapshot(op);
+            }
+            if (validateTarget) await wait(validateTarget);
+            const verified = await wait(context);
+            if (!verified?.ready || verified.assetUuid !== c.assetUuid || verified.rootUuid !== c.rootUuid ||
+                verified.dirty !== c.dirty || verified.mode !== c.mode) {
+                op.status = 'blocked'; op.reason = 'CONTEXT_CONFLICT'; return snapshot(op);
+            }
+            op.target = { uuid: kind === 'scene' ? args.uuid : c.assetUuid };
+            op.phase = 'executing';
+            await wait(async () => {
+                op.dispatched = true; pending = op;
+                try { await action(); }
+                catch (error) { op.requestFailed = true; throw error; }
+                finally { op.settled = true; }
+            });
+            op.phase = 'waiting_for_instance';
+            while (true) {
+                op.context = await wait(context);
+                if (confirmed(op, op.context)) {
+                    pending = null; op.status = 'completed'; op.phase = 'completed'; return snapshot(op);
+                }
+                await wait(() => new Promise(done => setTimeout(done, pollMs)));
+            }
+        } catch (error) {
+            op.status = op.dispatched ? 'unconfirmed' : 'failed';
+            op.reason = error.code === 'TIMEOUT' ? 'TIMEOUT' : error.message === 'INVALID_SCENE' ? 'INVALID_SCENE' : 'EDITOR_REQUEST_FAILED';
+            return snapshot(op);
+        } finally { busy = false; }
+    }
+
+    openPrefab.runEditorAction = runEditorAction;
     openPrefab.queryStatus = queryStatus;
     return openPrefab;
 }

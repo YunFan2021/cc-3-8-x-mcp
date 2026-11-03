@@ -117,3 +117,11 @@ test('拒绝无 token、浏览器 Origin、错误 Content-Type 和超限 body', 
     assert.equal((await post(request, { contentType: 'text/plain' })).statusCode, 415);
     assert.equal((await post(null, { rawBody: JSON.stringify({ data: 'x'.repeat(300) }) })).statusCode, 413);
 });
+
+test('Bridge 在执行 handler 前拦截非对象参数', async () => {
+    for (const value of [null, false, [], 'text']) {
+        const response = await post({ jsonrpc: '2.0', id: 6, method: 'bridge/invoke', params: { name: 'echo', arguments: value } });
+        assert.equal(response.body.result.isError, true);
+        assert.equal(response.body.result.structuredContent.code, 'INVALID_ARGUMENTS');
+    }
+});

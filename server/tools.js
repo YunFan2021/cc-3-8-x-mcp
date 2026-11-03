@@ -50,15 +50,20 @@ function defineTools(ctx) {
                 properties: {
                     uuid: { type: 'string' },
                     path: { type: 'string' },
+                    expectedAssetUuid: { type: 'string', description: '预期当前编辑资源 UUID' },
                     dump: { type: 'object' },
                 },
                 required: ['uuid', 'path', 'dump'],
             },
             handler: async function (args) {
-                return await msg('scene', 'set-property', {
-                    uuid: args.uuid,
-                    path: args.path,
-                    dump: args.dump,
+                return local.runEditorAction('edit', args, async () => {
+                    const record = await msg('scene', 'begin-recording', args.uuid);
+                    try {
+                        const result = await msg('scene', 'set-property', { uuid: args.uuid, path: args.path, dump: args.dump });
+                        if (result === false) throw Error('PROPERTY_WRITE_REJECTED');
+                    } finally {
+                        await msg('scene', 'end-recording', record);
+                    }
                 });
             },
         },
@@ -80,28 +85,28 @@ function defineTools(ctx) {
             description: '打开场景',
             inputSchema: {
                 type: 'object',
-                properties: { uuid: { type: 'string', description: '场景资源 uuid' } },
+                properties: { uuid: { type: 'string', description: '场景资源 uuid' }, expectedAssetUuid: { type: 'string', description: '可选：预期当前编辑资源 UUID，用于检测页面已切换' } },
                 required: ['uuid'],
             },
             handler: async function (args) {
-                return await msg('scene', 'open-scene', args.uuid);
+                return local.runEditorAction('scene', args, () => msg('scene', 'open-scene', args.uuid), async () => {
+                    const info = await msg('asset-db', 'query-asset-info', args.uuid);
+                    if (!info || info.uuid !== args.uuid || info.type !== 'cc.SceneAsset' ||
+                        !info.url?.startsWith('db://assets/') || info.invalid) throw Error('INVALID_SCENE');
+                });
             },
         },
         {
             name: 'scene_save_scene',
-            description: '保存当前场景',
-            inputSchema: { type: 'object', properties: {} },
-            handler: async function () {
-                return await msg('scene', 'save-scene');
-            },
+            description: '保存明确指定的当前编辑资源。必须传 expectedAssetUuid，需已获得保存该资源的授权。',
+            inputSchema: { type: 'object', properties: { expectedAssetUuid: { type: 'string' } }, required: ['expectedAssetUuid'] },
+            handler: args => local.runEditorAction('save', args, () => msg('scene', 'save-scene')),
         },
         {
             name: 'scene_soft_reload',
-            description: '软重载场景（不清编辑器状态）',
-            inputSchema: { type: 'object', properties: {} },
-            handler: async function () {
-                return await msg('scene', 'soft-reload');
-            },
+            description: '仅在当前编辑内容已保存时软重载，返回完成或保护状态。',
+            inputSchema: { type: 'object', properties: { expectedAssetUuid: { type: 'string' } } },
+            handler: args => local.runEditorAction('reload', args, () => msg('scene', 'soft-reload')),
         },
         {
             name: 'scene_execute_component_method',
@@ -294,13 +299,14 @@ function defineTools(ctx) {
         },
         {
             name: 'preview_refresh_and_reload',
-            description: '一键：刷新资源 + 软重载场景',
-            inputSchema: { type: 'object', properties: {} },
-            handler: async function () {
+            description: '在同一编辑上下文保护下刷新资源并软重载。未保存或状态未知时阻止。',
+            inputSchema: { type: 'object', properties: { expectedAssetUuid: { type: 'string' } }, required: ['expectedAssetUuid'] },
+            handler: args => local.runEditorAction('reload', args, async () => {
                 await local.doRefreshAssets();
+                const current = await local.queryContext();
+                if (current.dirty !== false || current.assetUuid !== args.expectedAssetUuid) throw Error('CONTEXT_CONFLICT');
                 await local.doReloadScene();
-                return 'ok';
-            },
+            }),
         },
 
         // ── local 域 ──
@@ -360,7 +366,11 @@ function defineTools(ctx) {
                 return local.fixMeta({ dryRun: !!(args && args.dryRun) });
             },
         },
-    ];
+    ].map(tool => {
+        // 顶层参数严格校验；dump、脚本 args 等嵌套内容继续遵循自身开放 schema。
+        tool.inputSchema.additionalProperties = false;
+        return tool;
+    });
 }
 
 function defineResources(ctx) {
