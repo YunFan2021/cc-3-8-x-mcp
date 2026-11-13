@@ -537,6 +537,7 @@ function buildToolCtx() {
             openPrefab,
             runEditorAction: openPrefab.runEditorAction,
             queryPrefabOpen: openPrefab.queryStatus,
+            recoverPrefabOperation: openPrefab.recover,
             getPreviewUrl: getPreviewUrl,
             doRefreshAssets: doRefreshAssets,
             doReloadScene: doReloadScene,

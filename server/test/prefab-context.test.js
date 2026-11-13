@@ -92,14 +92,17 @@ test('preflight timeout cannot issue a delayed open and allows a new request', a
     assert.equal(writes, 0);
 });
 
-test('rejected editor request retains protection and exposes its phase', async () => {
+test('rejected editor request exposes failure and reconciles only after context verification', async () => {
     const open = createOpener({ resolve: async () => ({ uuid: 'b' }), context: async () => current,
-        open: () => { throw Error('message failed'); } });
+        open: () => { throw TypeError('message failed'); } });
     const result = await open('b');
     assert.equal(result.reason, 'EDITOR_REQUEST_FAILED');
     assert.equal(result.phase, 'opening');
     assert.equal(result.settled, true);
-    assert.equal((await open('c')).status, 'pending');
+    const reconciled = await open.queryStatus(result.operationId);
+    assert.equal(reconciled.status, 'failed');
+    assert.equal(reconciled.lockActive, false);
+    assert.equal(reconciled.requestError.message, 'message failed');
 });
 
 test('context message timeout is bounded and late completion cannot mutate diagnostics', async () => {
@@ -166,7 +169,10 @@ test('重载超时后保持保护，完成消息与实例确认后可恢复', as
     const opener = createOpener({ resolve: async () => ({ uuid: 'a' }), context: async () => current, open: assert.fail, timeoutMs: 20 });
     const result = await opener.runEditorAction('reload', {}, () => new Promise(done => { release = done; }));
     assert.equal(result.status, 'unconfirmed');
-    assert.equal((await opener('a')).status, 'pending');
+    const readable = await opener('a');
+    assert.equal(readable.status, 'already_open');
+    assert.equal(readable.readOnly, true);
+    assert.equal(readable.lockActive, true);
     release(); await new Promise(done => setImmediate(done));
     assert.equal((await opener.queryStatus(result.operationId)).status, 'completed');
     assert.equal((await opener('a')).status, 'already_open');

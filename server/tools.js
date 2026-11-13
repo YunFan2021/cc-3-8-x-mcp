@@ -89,14 +89,23 @@ function defineTools(ctx) {
         },
         {
             name: 'prefab_query_open',
-            description: '只读查询最近一次 Prefab 打开操作及超时恢复状态。可用 operationId 核对，未知 ID 返回 not_found；不发起打开或取消请求。',
+            description: '只读查询最近一次受保护操作、真实请求结果与锁状态。迟到成功或明确失败可经上下文核对结束保护；传输超时仍保留保护。未知 ID 返回 not_found；不发起打开、保存或取消请求。',
             annotations: { readOnlyHint: true },
             inputSchema: { type: 'object', properties: { operationId: { type: 'string' } }, additionalProperties: false },
             handler: args => local.queryPrefabOpen(args.operationId),
         },
         {
+            name: 'prefab_recover_operation',
+            description: '人工接手后按 operationId、当前资源和根节点核对旧操作。仅通过只读核对收尾已结束且副作用可确认的请求；没有强制解锁，不重试、保存或取消。failed/superseded 且 lockActive=false 才可继续新的授权操作。',
+            annotations: { readOnlyHint: true },
+            inputSchema: { type: 'object', properties: {
+                operationId: { type: 'string' }, expectedAssetUuid: { type: 'string' }, expectedRootUuid: { type: 'string' },
+            }, required: ['operationId', 'expectedAssetUuid', 'expectedRootUuid'], additionalProperties: false },
+            handler: args => local.recoverPrefabOperation(args),
+        },
+        {
             name: 'prefab_open',
-            description: '安全打开本项目 Prefab，等待实际根节点。blocked/pending/unconfirmed 时禁止自动重试或保存。只在 opened/already_open 后回读实例。',
+            description: '安全打开本项目 Prefab，等待实际根节点。旧锁存在但目标已打开时只读返回 already_open、readOnly 和 blockingOperation，不发送切换；lockActive=true 时只可读实例。pending/unconfirmed 时查询旧操作，禁止重复切换或保存。',
             inputSchema: { type: 'object', properties: { asset: { type: 'string', description: 'db://assets URL、项目内绝对路径或标准资源 UUID' } }, required: ['asset'], additionalProperties: false },
             handler: args => local.openPrefab(args.asset),
         },

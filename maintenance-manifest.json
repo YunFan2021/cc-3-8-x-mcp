@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "scope": "editor-bridge-production-entrypoints",
-  "fingerprint": "ed49a88391d6df1db56ebb3f76ba119d22559379fbe4f0cc47c5a9908ed1d0eb",
+  "fingerprint": "b6d4db6a6227d8f5f1e75a626f87b344347a30091df890cb99a8eead07054d64",
   "files": {
-    "main.js": "a39e0f9f38480bf0c2c68de58d2ce45fde17e38f2233878a47f80ed7c47d1e2e",
+    "main.js": "311a341239881e0c00bfdac622f650cbf1e4974c60a3d3900883daaebd50df99",
     "package.json": "d0a1bc895eef229f6092a17a6847f55d34e022be0c9589a4d24239b4b9e266c7",
     "server/asset-confirm.js": "26989e87614f59ea412fcd8cff669c5c66d7bc17e1d63ad6050ab22a6d728e83",
     "server/binding-verify.js": "e60463f9ba294cd358ad02a8c560ed5e44828c27e3ea43ccc9c12cd7e9b5c74b",
@@ -12,8 +12,8 @@
     "server/identity.js": "5975d8024a4e648f39070c1c622dd16e817c47e3be0660287ecbb4f4a862af40",
     "server/local-status.js": "9707b53a1ea3ef301846414affcb6b197d69e58f2a18f907f014c90e0beb7ec4",
     "server/prefab-context.js": "94ed8a8979e416a7f3fd01c8da01bd94e6bdde52a3d26cf05592ec373dfbea58",
-    "server/prefab-open.js": "253f2c9254713740fa254e995ee2eef76a2b5627026afc792c9495acbe5a25b5",
-    "server/tools.js": "89110a9444ada37aa94c254d2daee72d7848e29ab6aaaf806d39681840be565b",
+    "server/prefab-open.js": "3ad2bfe5d2f4a5f57bdbee435f99a086fe9cc46c3b058b9352f0af8a940a9150",
+    "server/tools.js": "8265d9b31c7e493926a7f4c4fc10d2bb0b3bdde45455b1b25a661a6709d30643",
     "server/validate-arguments.js": "8072b657924eb22783abf456e3d57d76358e21b18eb75a13a64fe9c6bf559b23"
   }
 }
