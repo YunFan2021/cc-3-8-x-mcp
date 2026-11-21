@@ -20,27 +20,9 @@ Cocos Creator 编辑器将 prefab 序列化为 JSON 文件存储在磁盘上。�
 
 ## 整体架构
 
-```
-Claude Code / MCP agent
-        │
-        ▼
-    router.js（cc-3-8-x-mcp）
-        │
-        ├── offline tools（via cli 模块，纯文件 I/O）
-        │       ├── prefab_query   →  cli/src/parse.js + query.js
-        │       ├── prefab_edit    →  cli/src/write.js + overrides.js
-        │       └── prefab_batch   →  cli/src/batch.js
-        │
-        └── editor tools（via HTTP → Cocos 扩展进程）
-                ├── asset_reimport / asset_refresh
-                ├── scene_query / scene_set_property
-                ├── preview_screenshot
-                └── editor_eval
-```
+**离线操作**通过 CLI 或 Gateway 的 offline 工具读写本地 Prefab，不需要编辑器在线。
 
-**offline tools**：读写本地 `.prefab` 文件，不需要编辑器在线。适合批量、自动化场景。
-
-**editor tools**：通过 HTTP 与运行中的 Cocos Creator 编辑器通信（扩展监听固定端口）。可以操作运行时场景、触发资源重新导入、截图等。需要编辑器已启动且扩展已加载。
+**编辑器操作**先用 `gateway_list_editors` 按[项目绑定规则](../AGENTS.md#绑定当前项目)确定目标，再经 Gateway 使用该项目的 AssetDB 和场景工具；客户端不直接访问编辑器私有 Bridge。
 
 ---
 
@@ -54,36 +36,19 @@ Claude Code / MCP agent
 | 改 stub 节点普通字段（position / active） | **offline**（prefab_edit） | 工具自动路由到 propertyOverrides |
 | 改 stub 节点组件字段（Label._string / Sprite._spriteFrame） | **当前不支持** | 需跨 prefab 读取组件 fileId，未实现；必须在编辑器里手改 |
 | 查节点树结构 | **offline**（prefab_query）更快 | 纯文件解析，无需编辑器在线；但看不到运行时动态状态 |
-| 查运行时节点状态（动画、数据绑定后） | **editor**（scene_query） | 运行时才有真实数据 |
-| 触发资源重新导入 | **editor**（asset_reimport） | 必须让编辑器重建 UUID 索引 |
-| 预览截图 | **editor**（preview_screenshot） | 只有编辑器能渲染 |
-| 在预览中执行 JS | **editor**（editor_eval） | 需要运行时上下文 |
+| 查编辑器加载的节点和绑定 | **editor**（`scene_query_node`、`scene_verify_bindings`） | 回读当前实例 |
+| 确认资源重新导入 | **editor**（`asset_reimport_confirm`） | 检查 AssetDB 的导入结果 |
+| 游戏页面交互或截图 | 获得预览授权后使用浏览器 | 验证实际游戏页面 |
 | 改运行时场景节点（非 prefab 文件） | **editor**（scene_set_property） | 场景节点不存在离线文件可直改 |
 
 ---
 
 ## offline 改完后的操作流程
 
-直接改 `.prefab` 文件后，编辑器需要重新加载才能感知变化。有两种方式：
-
-### 方式 A：仅重新导入资产
-
-```
-editor tool: asset_reimport
-  参数: { "path": "assets/packages/game/home/ui/HomeUI.prefab" }
-```
-
-让编辑器重建该 prefab 的内部索引（UUID 映射、子资产列表）。适合只改了 prefab 内容、不涉及其他资产变动的情况。
-
-### 方式 B：整链路刷新（改动较大时）
-
-```
-editor tool: preview_refresh_and_reload
-```
-
-触发编辑器重新加载所有修改过的资产并刷新预览。改动多个文件时用此方式，避免缓存不一致。
-
-**重要**：offline 改完不做 reimport，编辑器下次保存 prefab 时可能用旧的序列化数据覆盖你的修改。
+1. 先核对磁盘差异，保护编辑器中的未保存改动，避免旧实例保存覆盖新文件。用 Gateway 绑定项目后，对需确认的资源调用 `asset_reimport_confirm`，传 `url` 和当前编辑资源的 `expectedAssetUuid`。外层操作完成且 `import.status=imported` 证明导入完成。
+2. 回读目标 Prefab 实例。用 `scene_verify_bindings(expectedAssetUuid, checks)` 核对资源引用；`matched` 只覆盖所查字段。导入完成、实例未验证时分别记录。
+3. 如确需刷新资产并软重载当前编辑器场景，传 `expectedAssetUuid` 调用 `preview_refresh_and_reload`。只在目标一致、`dirty=false` 时进行；遇到挂起或状态不明先核查，重载后再回读。
+4. 用户明确要求游戏预览时，查询项目预览 URL 并在浏览器检查实际画面或交互。“先不预览”时止于已完成的编辑器层级，报告视觉未验。
 
 ---
 

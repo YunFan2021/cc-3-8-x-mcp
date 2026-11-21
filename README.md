@@ -99,6 +99,7 @@ offline prefab tools（`prefab_query` / `prefab_edit` / `prefab_batch`）在 Gat
 
 **职责**：
 
+- 客户端按[绑定当前项目](AGENTS.md#绑定当前项目)调用 `gateway_list_editors` 并匹配项目。以下注册发现和鉴权由 Gateway 执行。
 - 扫描 `~/.cocos-mcp/editors/` 发现活跃编辑器（心跳超 120s 视为已死）
 - 只接受 `transport=editor-bridge`、Gateway API v2、Bridge API v1 的注册记录
 - 校验 PID、loopback `/bridge` endpoint 和随机 token；拒绝非本机地址
@@ -184,11 +185,9 @@ prefab_query                   →  Gateway 本地执行（cli），无需编辑
 | Tool | 说明 |
 |---|---|
 | `preview_query_url` | 查询当前预览 URL |
-| `preview_open_browser` | 在系统浏览器打开预览 |
-| `preview_refresh_browser` | 刷新预览页面 |
-| `preview_screenshot` | 截图，返回图片路径 |
-| `preview_eval_js` | 在预览页面执行 JS，返回执行结果 |
-| `preview_refresh_and_reload` | 重新导入资源后刷新预览（offline 改完必须调此工具才能看到效果） |
+| `preview_refresh_and_reload` | 传 `expectedAssetUuid`，刷新 AssetDB 并软重载编辑器场景 |
+
+游戏页面的打开、刷新、交互和截图按[浏览器验证](AGENTS.md#浏览器验证)执行。
 
 ### local 域（需编辑器运行）
 
@@ -261,7 +260,7 @@ Codex 使用全局 `cocos-mcp` plugin 的 `.mcp.json` 启动同一个 stdio Gate
 
 外部往 `<project>/temp/refresh` 文件写一行命令，编辑器扩展的 watcher 读到后执行并清空文件。fire-and-forget，无返回值。
 
-协议精简：**只支持 `restart-package`**——禁用→启用本扩展，让 `main.js` / `tools.js` / `server/*` 的代码改动生效。资源刷新 / 场景重载 / 预览刷新 / 截图等都走 MCP tool（`preview_refresh_and_reload` / `asset_reimport` / `preview_screenshot` 等）或面板按钮。
+协议精简：**只支持 `restart-package`**——禁用→启用本扩展，让 `main.js` / `tools.js` / `server/*` 的代码改动生效。资源导入与场景软重载使用相应 Gateway 工具；预览页面验收使用浏览器。
 
 ```bash
 echo "restart-package" > temp/refresh
@@ -275,7 +274,7 @@ echo "restart-package" > temp/refresh
 
 1. **stub 节点的组件字段**：`set-label-text` / `set-sprite-frame` / `set-nested-component-field` 已通过 `uuid-resolver.js` 解析 `CompPrefabInfo.fileId` 写入 stub 节点的 override
 2. **多层嵌套 stub**：CLI 已通过 `refSubNode` 字符串数组路径支持。极端深嵌套场景仍建议走 tools pipeline（`tools/step-3-script/bind-prefab-components.ts`）
-3. **offline 改完后需手动触发刷新**：直接写磁盘 Cocos 编辑器不会自动感知。改完后调用 `asset_reimport`（编辑器在线时）或 `preview_refresh_and_reload`，否则编辑器和预览页面看到的仍是旧内容
+3. **offline 改完后按层核验**：磁盘写入、资源导入和编辑器实例分别核对。详见[直改后的操作流程](doc/prefab-direct-edit.md#offline-改完后的操作流程)。
 
 ---
 
