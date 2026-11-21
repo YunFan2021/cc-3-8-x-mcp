@@ -68,7 +68,7 @@ before(async () => {
     }, null, 2), { mode: 0o600 });
 
     gateway = spawn(process.execPath, [path.join(__dirname, '..', 'bin.js')], {
-        env: Object.assign({}, process.env, { HOME: tempHome }),
+        env: Object.assign({}, process.env, { HOME: tempHome, USERPROFILE: tempHome }),
         stdio: ['pipe', 'pipe', 'pipe'],
     });
     gateway.on('exit', (code) => {

@@ -12,7 +12,7 @@
 
 const { parsePrefab } = require('../parse.js');
 const { resolveUuidToPath } = require('../uuid-resolver.js');
-const { findRootPrefabInfo, getStubOverrideName } = require('./helpers.js');
+const { findRootPrefabInfo, getStubOverrideName, isStub } = require('./helpers.js');
 
 // ─── 嵌套 prefab：找指定组件的 CompPrefabInfo.fileId ─────────
 
@@ -82,87 +82,32 @@ function getNestedCompFileId(hostPrefabPath, elements, stubNodeId, compType, nod
   );
 }
 
-function _findNestedNodeByPath(nEls, pathParts) {
-  if (!Array.isArray(pathParts) || pathParts.length === 0) return null;
-  let currentId = null;
-  for (let i = 0; i < nEls.length; i++) {
-    const el = nEls[i];
-    if (!el || el.__type__ !== 'cc.Node') continue;
-    if (el._parent !== null && el._parent !== undefined) continue;
-    if (el._name === pathParts[0]) {
-      currentId = i;
-      break;
-    }
-  }
-  if (currentId === null) {
-    for (let i = 0; i < nEls.length; i++) {
-      const el = nEls[i];
-      if (el && el.__type__ === 'cc.Node' && el._name === pathParts[0]) {
-        currentId = i;
-        break;
-      }
-    }
-  }
-  if (currentId === null) return null;
-
-  for (let partIdx = 1; partIdx < pathParts.length; partIdx++) {
-    const current = nEls[currentId];
-    const children = Array.isArray(current._children) ? current._children : [];
-    let nextId = null;
-    for (const childRef of children) {
-      if (!childRef || typeof childRef.__id__ !== 'number') continue;
-      const child = nEls[childRef.__id__];
-      if (child && child.__type__ === 'cc.Node' && child._name === pathParts[partIdx]) {
-        nextId = childRef.__id__;
-        break;
-      }
-    }
-    if (nextId === null) return null;
-    currentId = nextId;
-  }
-  return { node: nEls[currentId], nodeId: currentId };
+/** 按 Creator 的显示名查询：stub 的名称覆盖优先于序列化节点的 _name。 */
+function nestedNodeName(elements, node) {
+  return getStubOverrideName(elements, node) ?? node._name;
 }
 
-function _getNestedNodeFileIdByPath(hostPrefabPath, elements, stubNodeId, pathParts) {
-  const { nestedPath, nestedData } = _loadNestedPrefab(hostPrefabPath, elements, stubNodeId);
-  const nEls = nestedData.elements;
-  const found = _findNestedNodeByPath(nEls, pathParts);
-  if (!found) {
-    throw new Error(`getNestedNodeFileIdByPath: 在嵌套 prefab "${nestedPath}" 中找不到路径 "${pathParts.join('/')}"`);
-  }
-  const node = found.node;
-  if (!node._prefab || typeof node._prefab.__id__ !== 'number') {
-    throw new Error(`getNestedNodeFileIdByPath: 路径 "${pathParts.join('/')}" 的节点没有 PrefabInfo`);
-  }
-  const pi = nEls[node._prefab.__id__];
-  if (!pi || pi.__type__ !== 'cc.PrefabInfo' || typeof pi.fileId !== 'string' || pi.fileId.length === 0) {
-    throw new Error(`getNestedNodeFileIdByPath: 路径 "${pathParts.join('/')}" 的节点没有有效 fileId`);
-  }
-  return pi.fileId;
+function nestedRootId(elements) {
+  const id = elements[0]?.data?.__id__;
+  if (elements[id]?.__type__ === 'cc.Node') return id;
+  throw new Error('resolveLocalIdChain: 嵌套 prefab 没有有效根节点');
 }
 
-function _getNestedCompFileIdByPath(hostPrefabPath, elements, stubNodeId, compType, pathParts) {
-  const { nestedPath, nestedData } = _loadNestedPrefab(hostPrefabPath, elements, stubNodeId);
-  const nEls = nestedData.elements;
-  const found = _findNestedNodeByPath(nEls, pathParts);
-  if (!found) {
-    throw new Error(`getNestedCompFileIdByPath: 在嵌套 prefab "${nestedPath}" 中找不到路径 "${pathParts.join('/')}"`);
+function findNamedNode(elements, name, rootId, firstSegment) {
+  const children = elements[rootId]._children || [];
+  // 首段兼容显式根名前缀及旧版的按名称查找；其余段严格沿父子路径查询。
+  if (firstSegment && nestedNodeName(elements, elements[rootId]) === name) return rootId;
+  for (const ref of children) {
+    const node = elements[ref.__id__];
+    if (node?.__type__ === 'cc.Node' && nestedNodeName(elements, node) === name) return ref.__id__;
   }
-  const comps = Array.isArray(found.node._components) ? found.node._components : [];
-  for (const compRef of comps) {
-    if (!compRef || typeof compRef.__id__ !== 'number') continue;
-    const comp = nEls[compRef.__id__];
-    if (!comp || comp.__type__ !== compType) continue;
-    if (!comp.__prefab || typeof comp.__prefab.__id__ !== 'number') continue;
-    const cpi = nEls[comp.__prefab.__id__];
-    if (!cpi || cpi.__type__ !== 'cc.CompPrefabInfo') continue;
-    if (typeof cpi.fileId !== 'string' || cpi.fileId.length === 0) continue;
-    return cpi.fileId;
+  if (firstSegment) {
+    for (let i = 0; i < elements.length; i++) {
+      const node = elements[i];
+      if (node?.__type__ === 'cc.Node' && nestedNodeName(elements, node) === name) return i;
+    }
   }
-  throw new Error(
-    `getNestedCompFileIdByPath: 嵌套 prefab "${nestedPath}" 的路径 "${pathParts.join('/')}" ` +
-    `找不到 ${compType} 组件，或该组件没有 cc.CompPrefabInfo.fileId。`
-  );
+  return null;
 }
 
 // ─── 嵌套 prefab：找目标节点的 PrefabInfo.fileId ──────────────
@@ -311,17 +256,15 @@ function setStubCompOverride(prefabData, stubNodeId, compFileId, propertyPath, v
 // cc.TargetOverrideInfo，target 指向 stub 节点，targetInfo.localID 是子
 // prefab 里目标组件的 __prefab.fileId。
 //
-// localID 为数组支持多层 nested：每过一层 PrefabInstance 边界新开子 map，
-// 每个元素是该层某节点/组件的 fileId。当前 cli 实现只支持 1 层；多层场景由
-// 上游 tools/step-3-script/bind-prefab-components 兜底。
+// localID 每跨一层 PrefabInstance 边界追加 instance.fileId，末段是目标节点或组件的 fileId。
 
 /**
  * 在子 prefab 里按 compType + subNode 找目标组件 / 节点 fileId，
  * 返回 localID 数组。支持多层嵌套：
  *
- *   subNode = null | string         → 单层（在子 prefab 根上找 compType）
- *   subNode = ['name1', 'name2']    → 多层（每段是嵌套 stub 节点名，
- *                                     最后一段 + compType 决定终点）
+ *   subNode = null                → 保留旧版首次匹配行为
+ *   subNode = string              → 在子 prefab 内按名称找节点
+ *   subNode = ['name1', 'name2']   → 按路径穿过普通节点及任意层嵌套 stub
  *
  * 多层链：path=['A','B'], compType='cc.Label'
  *   = 主 prefab stub → A.prefab 内的 stub 'A' → B.prefab 内的 cc.Label
@@ -329,67 +272,67 @@ function setStubCompOverride(prefabData, stubNodeId, compFileId, propertyPath, v
  *   注意每跨一层 PrefabInstance 边界，链 push 一个 fileId。
  */
 function resolveLocalIdChain(hostPrefabPath, elements, stubNodeId, compType, subNode) {
-  // 单层：subNode 为 null 或字符串
-  if (subNode === null || subNode === undefined || typeof subNode === 'string') {
-    if (compType === 'cc.Node') {
-      const nodeFileId = getNestedNodeFileId(hostPrefabPath, elements, stubNodeId, subNode);
-      return [nodeFileId];
-    }
-    const compFileId = getNestedCompFileId(hostPrefabPath, elements, stubNodeId, compType, subNode);
-    return [compFileId];
+  if (subNode === null || subNode === undefined || (Array.isArray(subNode) && subNode.length === 0)) {
+    return [compType === 'cc.Node'
+      ? getNestedNodeFileId(hostPrefabPath, elements, stubNodeId, null)
+      : getNestedCompFileId(hostPrefabPath, elements, stubNodeId, compType, null)];
   }
-
-  // 多层：subNode 是字符串数组（路径）
-  if (!Array.isArray(subNode) || !subNode.every((s) => typeof s === 'string' && s.length > 0)) {
+  const parts = typeof subNode === 'string' ? [subNode] : subNode;
+  if (!Array.isArray(parts) || !parts.every(s => typeof s === 'string' && s.length > 0)) {
     throw new Error(`resolveLocalIdChain: subNode 必须是 null / 字符串 / 字符串数组，收到 ${JSON.stringify(subNode)}`);
   }
-  if (subNode.length === 0) {
-    return resolveLocalIdChain(hostPrefabPath, elements, stubNodeId, compType, null);
-  }
-  if (subNode.length === 1) {
-    return resolveLocalIdChain(hostPrefabPath, elements, stubNodeId, compType, subNode[0]);
-  }
 
-  try {
-    if (compType === 'cc.Node') {
-      return [_getNestedNodeFileIdByPath(hostPrefabPath, elements, stubNodeId, subNode)];
+  let { nestedPath, nestedData } = _loadNestedPrefab(hostPrefabPath, elements, stubNodeId);
+  let currentElements = nestedData.elements;
+  let nodeId = findNamedNode(currentElements, parts[0], nestedRootId(currentElements), true);
+  const localID = [];
+  const visited = new Set([nestedPath]);
+  let consumed = 1;
+  for (;;) {
+    if (nodeId === null) {
+      throw new Error(`resolveLocalIdChain: 嵌套 prefab "${nestedPath}" 中找不到路径 "${parts.join('/')}"`);
     }
-    return [_getNestedCompFileIdByPath(hostPrefabPath, elements, stubNodeId, compType, subNode)];
-  } catch (_) {
-    // 不是普通子节点路径时，继续沿用旧语义：数组表示多层 nested stub 链。
-  }
+    const node = currentElements[nodeId];
+    if (isStub(currentElements, node)) {
+      const info = currentElements[node._prefab.__id__];
+      const instance = currentElements[info.instance.__id__];
+      if (typeof instance.fileId !== 'string' || instance.fileId.length === 0) {
+        throw new Error(`resolveLocalIdChain: 嵌套实例 "${nestedNodeName(currentElements, node)}" 缺少 instance.fileId`);
+      }
+      localID.push(instance.fileId);
+      const child = _loadNestedPrefab(nestedPath, currentElements, nodeId);
+      if (visited.has(child.nestedPath)) {
+        throw new Error(`resolveLocalIdChain: 嵌套 prefab 循环引用 "${child.nestedPath}"`);
+      }
+      visited.add(child.nestedPath);
+      nestedPath = child.nestedPath;
+      currentElements = child.nestedData.elements;
+      nodeId = nestedRootId(currentElements);
+      continue;
+    }
+    if (consumed < parts.length) {
+      nodeId = findNamedNode(currentElements, parts[consumed++], nodeId, false);
+      continue;
+    }
 
-  // 多层：从当前 stub 进入第一层嵌套，找名字 = subNode[0] 的内嵌 stub，
-  // 拿到它在嵌套 prefab 内的 fileId，递归走剩下的路径
-  const [firstSeg, ...restPath] = subNode;
-  const { nestedPath, nestedData } = _loadNestedPrefab(hostPrefabPath, elements, stubNodeId);
-  const nEls = nestedData.elements;
-
-  let innerStubId = -1;
-  let innerStubFileId = null;
-  for (let i = 0; i < nEls.length; i++) {
-    const el = nEls[i];
-    if (!el || el.__type__ !== 'cc.Node') continue;
-    if ((el._name || getStubOverrideName(nEls, el)) !== firstSeg) continue;
-    if (!el._prefab || typeof el._prefab.__id__ !== 'number') continue;
-    const innerPi = nEls[el._prefab.__id__];
-    if (!innerPi || innerPi.__type__ !== 'cc.PrefabInfo') continue;
-    if (!innerPi.instance) continue; // 不是 stub
-    const innerInstance = nEls[innerPi.instance.__id__];
-    if (!innerInstance || typeof innerInstance.fileId !== 'string' || !innerInstance.fileId) continue;
-    innerStubId = i;
-    innerStubFileId = innerInstance.fileId;
-    break;
+    let info;
+    if (compType === 'cc.Node') {
+      info = currentElements[node._prefab?.__id__];
+    } else {
+      for (const ref of node._components || []) {
+        const component = currentElements[ref.__id__];
+        if (component?.__type__ === compType) {
+          info = currentElements[component.__prefab?.__id__];
+          break;
+        }
+      }
+    }
+    if (typeof info?.fileId !== 'string' || info.fileId.length === 0) {
+      throw new Error(`resolveLocalIdChain: 路径 "${parts.join('/')}" 找不到 ${compType} 的有效 fileId`);
+    }
+    localID.push(info.fileId);
+    return localID;
   }
-  if (innerStubId < 0) {
-    throw new Error(
-      `resolveLocalIdChain: 嵌套 prefab "${nestedPath}" 中找不到名为 "${firstSeg}" 的 stub 节点`
-    );
-  }
-
-  // 递归到下一层（用嵌套 prefab 自身作为 hostPrefabPath）
-  const innerChain = resolveLocalIdChain(nestedPath, nEls, innerStubId, compType, restPath);
-  return [innerStubFileId, ...innerChain];
 }
 
 /** 加载 stub 指向的嵌套 prefab，返回路径 + parsed data */
@@ -417,20 +360,26 @@ function _loadNestedPrefab(hostPrefabPath, elements, stubNodeId) {
 
 // ─── propertyPath 数组索引 normalize ─────────────────────────────────────────
 //
-// Cocos TargetOverrideInfo.propertyPath 声明为 string[]，数组下标也必须是字符串。
-// 3.8.1 / 3.8.8 的 applyTargetOverrides 会对末段做 falsy 检查；数字 0 会让
-// 整批还原直接 return，导致本项及后续引用全部留空。
+// Cocos 编辑器加载 prefab 时按 JSON 类型区分属性名（string）与数组索引（number）。
+// 若数组索引以 string 形式写入（如 "0" 代替 0），编辑器无法匹配对应数组槽，
+// TargetOverrideInfo 静默失效（inspector 显示空）。
 //
 // 使用方法：
 //   addRootTargetOverride 在写入前调用 normalizePropertyPath，
-//   将经由字符串解析或直接传入的数组下标统一转为 string。
+//   保证任何经由字符串解析（"_items.0"、"_items[0]"）或直接传入的数字 string
+//   都被转换为 number 类型的数组索引。
 //
-// 例：["_items", "0"] → ["_items", "0"]
-//     ["_items",  0 ] → ["_items", "0"]
+// 例：["_items", "0"] → ["_items", 0]
+//     ["_items",  0 ] → ["_items", 0]  （已是 number，不变）
 //     ["_role"      ] → ["_role"    ]  （无下标，不变）
 
 function normalizePropertyPath(path) {
-  return path.map(String);
+  return path.map(function(seg) {
+    if (typeof seg === 'string' && /^\d+$/.test(seg)) {
+      return parseInt(seg, 10);
+    }
+    return seg;
+  });
 }
 
 /**
@@ -438,7 +387,8 @@ function normalizePropertyPath(path) {
  * + cc.TargetInfo，实现跨 stub @property 挂载。
  *
  * @param {(string|number)[]} propertyPath  属性路径数组，普通字段如 ["_role"]，
- *   数组字段元素如 ["_items", "0"]；传入数字下标时自动转为字符串。
+ *   数组字段元素如 ["_items", 0]（索引用数字而非字符串）。
+ *   传入字符串形式的数字索引（如 "0"）会被内部自动转为 number，调用方无需预处理。
  */
 function addRootTargetOverride(prefabData, rootId, sourceCompId, propertyPath, targetStubId, localIdChain) {
   const { elements } = prefabData;
@@ -447,20 +397,13 @@ function addRootTargetOverride(prefabData, rootId, sourceCompId, propertyPath, t
     throw new Error(`addRootTargetOverride: 找不到主 prefab root PrefabInfo（rootId=${rootId}）`);
   }
 
-  // 与引擎的 string[] 声明保持一致。
+  // 确保数组索引为 number 类型（Cocos 编辑器按类型匹配，string "0" ≠ number 0）
   const normalizedPath = normalizePropertyPath(propertyPath);
 
   // 幂等：已存在同 source/propertyPath/target/localID 的 override 直接返回
   // 注意：dedupe key 使用完整 propertyPath 数组比对，
   // 允许同一字段名但不同索引（如 ["_items",0] vs ["_items",1]）共存。
   const existingRefs = Array.isArray(rootPrefabInfo.targetOverrides) ? rootPrefabInfo.targetOverrides : [];
-  // 同步修正旧工具留下的数字下标，保留 override、targetInfo 和 fileId 的身份。
-  for (const r of existingRefs) {
-    const ov = elements[r.__id__];
-    if (ov && ov.__type__ === 'cc.TargetOverrideInfo' && Array.isArray(ov.propertyPath)) {
-      ov.propertyPath = normalizePropertyPath(ov.propertyPath);
-    }
-  }
   for (const r of existingRefs) {
     if (typeof r.__id__ !== 'number') continue;
     const ov = elements[r.__id__];

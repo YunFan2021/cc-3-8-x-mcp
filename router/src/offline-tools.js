@@ -76,8 +76,9 @@ var OFFLINE_TOOLS = [
     {
         name: 'prefab_edit',
         description: '[offline] 不需要 Cocos 编辑器运行。声明式批量编辑 prefab 文件，全部 op 成功后一次性落盘。\n' +
-            '支持 CLI editPrefab 的全部 op；组件操作包括 add-component / remove-component / replace-component / set-component-ref。\n' +
-            'replace-component 在原组件 __id__ 槽位平替，默认保留字段、引用、组件顺序和 fileId；可用 replacementType 换类型，refreshFileId=true 模拟删旧再挂新。\n' +
+            '常用 op.op 类型：set-position / set-label-text / set-sprite-frame / set-active / add-node / remove-node / clone-node / add-component / remove-component / replace-component / set-component-ref\n' +
+            'remove-component 按 componentType 移除普通节点上的组件引用，保留其他对象的 __id__。\n' +
+            'replace-component 在普通节点上原位替换组件，默认保留字段、引用、组件顺序和 fileId；replacementType 可指定新类型，refreshFileId=true 会生成新 fileId。\n' +
             'op.node / op.parent / op.refNode 可以是节点名称字符串，或 { id: N } 按 __id__ 定位。',
         inputSchema: {
             type: 'object',
